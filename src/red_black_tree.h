@@ -2,59 +2,142 @@
 #include <type_traits>
 #include "types.h"
 
-
-class BatchAllocator
+//Store contiguously data of a specific type
+template <class Type>
+class BucketAllocator
 {
-	//TODO
+	static_assert(std::is_default_constructible_v<Type>, "Type needs to be default constructible");
+public:
+	BucketAllocator() = default;
+
+	~BucketAllocator() 
+	{
+		::operator delete(internal_storage);
+	}
+
+	void* allocate_new()
+	{
+		if (internal_storage == nullptr) {
+			capacity = BUCKET_SIZE;
+			size = 0;
+			internal_storage = static_cast<StorageChain*>(::operator new(capacity * sizeof(StorageChain)));
+			internal_storage->next = nullptr;
+			std::memset(internal_storage, 0, capacity * sizeof(BucketValue));
+		}
+
+		if (size >= capacity) {
+			capacity += BUCKET_SIZE;
+			
+			StorageChain* iter = internal_storage;
+			while (iter->next) iter = iter->next;
+			iter->next = new StorageChain;
+			iter->next->next = nullptr;
+		}
+
+		++size;
+		u32 index = 0;
+		StorageChain* iter = internal_storage;
+		for (; index < capacity; index++) {
+			if (index != 0 && index % BUCKET_SIZE == 0) {
+				iter = iter->next;
+				assert(iter != nullptr);
+				index %= 64;
+			}
+
+			if (iter->bucket[index].memory_state != MEMORY_USED)
+				break;
+		}
+
+		if(iter->bucket[index].memory_state & MEMORY_DIRTY)
+			std::memset(&iter->bucket[index].allocated, 0, sizeof(Type));
+
+		iter->bucket[index].memory_state = MEMORY_USED;
+		return &iter->bucket[index].allocated;
+	}
+
+	void free(void* memory, bool clear_mem = false)
+	{
+		StorageChain* iter = internal_storage;
+		for (u32 index = 0; index < capacity; index++) {
+			if (index != 0 && index % BUCKET_SIZE == 0) {
+				iter = iter->next;
+				assert(iter != nullptr);
+				index %= 64;
+			}
+
+			if (&iter->bucket[index].allocated == memory) {
+				if (clear_mem) {
+					std::memset(&iter->bucket[index].allocated, 0, sizeof(Type));
+					iter->bucket[index].memory_state = MEMORY_NOT_USED;
+				}
+				else {
+					iter->bucket[index].memory_state = MEMORY_DIRTY;
+				}
+				break;
+			}
+		}
+	}
+private:
+	static constexpr u8 MEMORY_NOT_USED = 0x00;
+	static constexpr u8 MEMORY_USED     = 0x01;
+	static constexpr u8 MEMORY_DIRTY    = 0x02;
+	static constexpr u8 BUCKET_SIZE     = 64;
+
+	struct BucketValue
+	{
+		u8 memory_state;
+		Type allocated;
+	};
+
+	struct StorageChain
+	{
+		BucketValue bucket[BUCKET_SIZE];
+		StorageChain* next = nullptr;
+	};
+
+	StorageChain* internal_storage = nullptr;
+	u32 capacity = 0, size = 0;
 };
 
-//To replace with allocators
-static void* allocate_node(u32 size)
-{
-	void* ptr = ::operator new(size);
-	std::memset(ptr, 0, size);
-	return ptr;
-}
+enum class Color { Black = 0, Red };
 
-static void free_node(void* mem) 
+template<typename Type, typename Index = u64>
+struct TreeNode
 {
-	::operator delete(mem);
-}
+	Color color;
+	Index index;
+	Type* content;
+	TreeNode* left, * right, * parent;
+};
 
-template<typename Type, typename Index = u64, class Allocator = std::allocator<Type>>
+template<typename Type, typename Index = u64, class Allocator = BucketAllocator<TreeNode<Type, Index>>>
 class RedBlackTree
 {
 	static_assert(std::is_integral_v<Index>, "Index needs to be of integral type");
-
-	enum class Color { Black = 0, Red };
-	struct TreeNode
-	{
-		Color color;
-		Index index;
-		Type* content;
-		TreeNode* left, *right, *parent;
-	};
+	using NodeType = TreeNode<Type, Index>;
 public:
-	RedBlackTree() : root{nullptr} {}
+	RedBlackTree() : root{ nullptr }, node_count{0} {}
 
 	template<class... Args>
 	void emplace_node(Index value, Args&&... args)
 	{
 		static_assert(std::is_constructible_v<Type, Args...>, "The type needs to be constructible with the given params");
+		++node_count;
 
 		if (root == nullptr) {
-			root = static_cast<TreeNode*>(allocate_node(sizeof(TreeNode)));
+			root = static_cast<NodeType*>(alloc.allocate_new());
+
 			root->color = Color::Black;
 			root->index = value;
 			root->content = new Type{ std::forward<Args>(args)... };
 			return;
 		}
 
-		TreeNode* node = nullptr;
+		NodeType* node = nullptr;
 
 		{
-			TreeNode** _iter = &root;
-			TreeNode* _parent = nullptr;
+			NodeType** _iter = &root;
+			NodeType* _parent = nullptr;
 			while (*_iter != nullptr) {
 				if (value > (*_iter)->index) {
 					_parent = *_iter;
@@ -66,7 +149,7 @@ public:
 				}
 			}
 
-			*_iter = static_cast<TreeNode*>(allocate_node(sizeof(TreeNode)));
+			*_iter = static_cast<NodeType*>(alloc.allocate_new());
 			(*_iter)->color = Color::Red;
 			(*_iter)->parent = _parent;
 			(*_iter)->index = value;
@@ -82,9 +165,9 @@ public:
 		emplace_node_fixup(node);
 	}
 
-	TreeNode* get_node(Index index)
+	NodeType* get_node(Index index)
 	{
-		TreeNode* node = root;
+		NodeType* node = root;
 		while (node == nullptr || node->index != index) {
 			if (node->index < index)
 				node = node->right;
@@ -97,7 +180,7 @@ public:
 
 	void delete_node(Index index)
 	{
-		TreeNode* node = root;
+		NodeType* node = root;
 		while(node == nullptr || node->index != index){
 			if(node->index < index)
 				node = node->right;
@@ -111,9 +194,12 @@ public:
 		isolate_node(node);
 		delete_node_fixup(node);
 		cleanup_terminal_node(node);
+
+		if (--node_count == 0)
+			root = nullptr;
 	}
 private:
-	void isolate_node(TreeNode*& node)
+	void isolate_node(NodeType*& node)
 	{
 		if (node->left == nullptr && node->right == nullptr) {
 			return;
@@ -132,7 +218,7 @@ private:
 		}
 		else {
 			//node has both children
-			TreeNode* iter = node->left;
+			NodeType* iter = node->left;
 			while (iter->right)
 				iter = iter->right;
 
@@ -141,7 +227,7 @@ private:
 		}
 	}
 
-	void emplace_node_fixup(TreeNode* node)
+	void emplace_node_fixup(NodeType* node)
 	{
 		//Insertion case 3
 		assert(node->parent != nullptr);
@@ -186,13 +272,13 @@ private:
 		}
 	}
 
-	void delete_node_fixup(TreeNode* node)
+	void delete_node_fixup(NodeType* node)
 	{
 		if (node->parent == nullptr)
 			return;
 
-		TreeNode* parent = node->parent;
-		TreeNode* sibling = sibling_node(node);
+		NodeType* parent = node->parent;
+		NodeType* sibling = sibling_node(node);
 		if (parent->left == node)
 			parent->left = nullptr;
 		else
@@ -260,13 +346,13 @@ private:
 		}
 	}
 
-	void cleanup_terminal_node(TreeNode* node)
+	void cleanup_terminal_node(NodeType* node)
 	{
 		delete node->content;
-		free_node(node);
+		alloc.free(node);
 	}
 
-	void swap_node_data(TreeNode* first, TreeNode* second)
+	void swap_node_data(NodeType* first, NodeType* second)
 	{
 		Type* tmp = first->content;
 		first->content = second->content;
@@ -277,10 +363,10 @@ private:
 		second->index = index;
 	}
 
-	void rotate_left(TreeNode* node)
+	void rotate_left(NodeType* node)
 	{
-		TreeNode* parent = node->parent;
-		TreeNode* grandfather = grandfather_node(node);
+		NodeType* parent = node->parent;
+		NodeType* grandfather = grandfather_node(node);
 		assert(parent != nullptr);
 
 		if (grandfather != nullptr) {
@@ -294,7 +380,7 @@ private:
 		}
 
 		node->parent = grandfather;
-		TreeNode* node_left_branch = node->left;
+		NodeType* node_left_branch = node->left;
 		node->left = parent;
 		parent->parent = node;
 
@@ -302,10 +388,10 @@ private:
 		if(node_left_branch != nullptr) node_left_branch->parent = parent;
 	}
 
-	void rotate_right(TreeNode* node)
+	void rotate_right(NodeType* node)
 	{
-		TreeNode* parent = node->parent;
-		TreeNode* grandfather = grandfather_node(node);
+		NodeType* parent = node->parent;
+		NodeType* grandfather = grandfather_node(node);
 		assert(parent != nullptr);
 
 		if (grandfather != nullptr) {
@@ -319,7 +405,7 @@ private:
 		}
 
 		node->parent = grandfather;
-		TreeNode* node_right_branch = node->right;
+		NodeType* node_right_branch = node->right;
 		node->right = parent;
 		parent->parent = node;
 
@@ -327,21 +413,21 @@ private:
 		if (node_right_branch != nullptr) node_right_branch->parent = parent;
 	}
 
-	inline TreeNode* grandfather_node(TreeNode* node) 
+	inline NodeType* grandfather_node(NodeType* node) 
 	{
 		assert(node->parent != nullptr);
 		return node->parent->parent;
 	}
 
-	inline TreeNode* uncle_node(TreeNode* node)
+	inline NodeType* uncle_node(NodeType* node)
 	{
-		TreeNode* gfather = grandfather_node(node);
+		NodeType* gfather = grandfather_node(node);
 		assert(gfather != nullptr);
 
 		return node->parent == gfather->right ? gfather->left : gfather->right;
 	}
 
-	inline TreeNode* sibling_node(TreeNode* node)
+	inline NodeType* sibling_node(NodeType* node)
 	{
 		assert(node->parent != nullptr);
 		if(node == node->parent->right)
@@ -350,5 +436,7 @@ private:
 			return node->parent->right;
 	}
 private:
-	TreeNode* root;
+	NodeType* root;
+	u32 node_count;
+	Allocator alloc;
 };

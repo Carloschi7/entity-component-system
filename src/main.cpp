@@ -229,12 +229,17 @@ int main()
 	tree.emplace_node(6, int{});
 	tree.emplace_node(7, int{});
 
-	tree.delete_node(5);
-	tree.delete_node(6);
 	tree.delete_node(7);
-	tree.delete_node(1);
-	tree.delete_node(4);
-	tree.delete_node(2);
+	tree.emplace_node(7, int{});
+
+	//tree.delete_node(5);
+	//tree.delete_node(6);
+	//tree.delete_node(7);
+	//tree.delete_node(1);
+	//tree.delete_node(4);
+	//tree.delete_node(2);
+	//tree.delete_node(3);
+	//tree.delete_node(0);
 
 	return 0;
 }
