@@ -6,13 +6,15 @@
 template <class Type>
 class BucketAllocator
 {
+	struct BucketChain;
 	static_assert(std::is_default_constructible_v<Type>, "Type needs to be default constructible");
+	//static_assert(std::is_default_destructible_v<Type>, "Type needs to be default constructible");
 public:
 	BucketAllocator() = default;
 
 	~BucketAllocator() 
 	{
-		::operator delete(internal_storage);
+		_destroy(internal_storage);
 	}
 
 	void* allocate_new()
@@ -20,23 +22,23 @@ public:
 		if (internal_storage == nullptr) {
 			capacity = BUCKET_SIZE;
 			size = 0;
-			internal_storage = static_cast<StorageChain*>(::operator new(capacity * sizeof(StorageChain)));
+			internal_storage = static_cast<BucketChain*>(::operator new(sizeof(BucketChain)));
 			internal_storage->next = nullptr;
-			std::memset(internal_storage, 0, capacity * sizeof(BucketValue));
+			std::memset(internal_storage, 0, sizeof(BucketChain));
 		}
 
 		if (size >= capacity) {
 			capacity += BUCKET_SIZE;
 			
-			StorageChain* iter = internal_storage;
+			BucketChain* iter = internal_storage;
 			while (iter->next) iter = iter->next;
-			iter->next = new StorageChain;
+			iter->next = new BucketChain;
 			iter->next->next = nullptr;
 		}
 
 		++size;
 		u32 index = 0;
-		StorageChain* iter = internal_storage;
+		BucketChain* iter = internal_storage;
 		for (; index < capacity; index++) {
 			if (index != 0 && index % BUCKET_SIZE == 0) {
 				iter = iter->next;
@@ -57,7 +59,7 @@ public:
 
 	void free(void* memory, bool clear_mem = false)
 	{
-		StorageChain* iter = internal_storage;
+		BucketChain* iter = internal_storage;
 		for (u32 index = 0; index < capacity; index++) {
 			if (index != 0 && index % BUCKET_SIZE == 0) {
 				iter = iter->next;
@@ -77,6 +79,19 @@ public:
 			}
 		}
 	}
+
+private:
+
+
+	void _destroy(BucketChain* chain) 
+	{
+		if (chain == nullptr)
+			return;
+
+		_destroy(chain->next);
+		::operator delete[](chain);
+	}
+
 private:
 	static constexpr u8 MEMORY_NOT_USED = 0x00;
 	static constexpr u8 MEMORY_USED     = 0x01;
@@ -89,14 +104,16 @@ private:
 		Type allocated;
 	};
 
-	struct StorageChain
+	struct BucketChain
 	{
 		BucketValue bucket[BUCKET_SIZE];
-		StorageChain* next = nullptr;
+		BucketChain* next = nullptr;
 	};
 
-	StorageChain* internal_storage = nullptr;
+	BucketChain* internal_storage = nullptr;
 	u32 capacity = 0, size = 0;
+
+
 };
 
 enum class Color { Black = 0, Red };
@@ -108,6 +125,42 @@ struct TreeNode
 	Index index;
 	Type* content;
 	TreeNode* left, * right, * parent;
+
+	TreeNode* find_next()
+	{
+		TreeNode* node = this;
+		if (node->right) {
+			TreeNode* sub_node = node->right;
+			while (sub_node->left)
+				sub_node = sub_node->left;
+
+			return sub_node;
+		}
+
+		TreeNode* sub_node = node->parent;
+		while (sub_node && sub_node->index < index)
+			sub_node = sub_node->parent;
+
+		return sub_node;
+	}
+
+	TreeNode* find_prev()
+	{
+		TreeNode* node = this;
+		if (node->left) {
+			TreeNode* sub_node = node->left;
+			while (sub_node->right)
+				sub_node = sub_node->right;
+
+			return sub_node;
+		}
+
+		TreeNode* sub_node = node->parent;
+		while (sub_node && sub_node->index > index)
+			sub_node = sub_node->parent;
+
+		return sub_node;
+	}
 };
 
 template<typename Type, typename Index = u64, class Allocator = BucketAllocator<TreeNode<Type, Index>>>
@@ -118,8 +171,13 @@ class RedBlackTree
 public:
 	RedBlackTree() : root{ nullptr }, node_count{0} {}
 
+	~RedBlackTree()
+	{
+		destroy_tree(root);
+	}
+
 	template<class... Args>
-	void emplace_node(Index value, Args&&... args)
+	Type& emplace_node(Index value, Args&&... args)
 	{
 		static_assert(std::is_constructible_v<Type, Args...>, "The type needs to be constructible with the given params");
 		++node_count;
@@ -130,7 +188,7 @@ public:
 			root->color = Color::Black;
 			root->index = value;
 			root->content = new Type{ std::forward<Args>(args)... };
-			return;
+			return *root->content;
 		}
 
 		NodeType* node = nullptr;
@@ -160,20 +218,41 @@ public:
 
 		//No need to fixup
 		if (node->parent->color == Color::Black)
-			return;
+			return *node->content;
 
 		emplace_node_fixup(node);
+		return *node->content;
 	}
 
-	NodeType* get_node(Index index)
+	NodeType* find_node(Index index)
 	{
 		NodeType* node = root;
-		while (node == nullptr || node->index != index) {
+		while (node != nullptr && node->index != index) {
 			if (node->index < index)
 				node = node->right;
 			else
 				node = node->left;
 		}
+
+		return node;
+	}
+
+	NodeType* find_first() 
+	{
+		assert(root != nullptr);
+		NodeType* node = root;
+		while (node->left)
+			node = node->left;
+
+		return node;
+	}
+
+	NodeType* find_last()
+	{
+		assert(root != nullptr);
+		NodeType* node = root;
+		while (node->right)
+			node = node->right;
 
 		return node;
 	}
@@ -188,7 +267,12 @@ public:
 				node = node->left;
 		}
 
-		if(node == nullptr)
+		delete_node(node);
+	}
+
+	void delete_node(NodeType* node)
+	{
+		if (node == nullptr)
 			return;
 
 		isolate_node(node);
@@ -198,6 +282,7 @@ public:
 		if (--node_count == 0)
 			root = nullptr;
 	}
+
 private:
 	void isolate_node(NodeType*& node)
 	{
@@ -217,7 +302,7 @@ private:
 			return;
 		}
 		else {
-			//node has both children
+			//Node has both children
 			NodeType* iter = node->left;
 			while (iter->right)
 				iter = iter->right;
@@ -435,6 +520,25 @@ private:
 		else
 			return node->parent->right;
 	}
+
+private:
+	void destroy_tree(NodeType* node)
+	{
+		if (node == nullptr)
+			return;
+
+		destroy_tree(node->left);
+		destroy_tree(node->right);
+		
+		if (node->content) {
+			node->content->~Type();
+			delete node->content;
+		}
+		
+		//alloc.free(Node);
+		//dont bother with the deletion, we free everything at the end
+	}
+
 private:
 	NodeType* root;
 	u32 node_count;

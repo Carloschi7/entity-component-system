@@ -2,7 +2,7 @@
 #include <map>
 #include <vector>
 #include <memory>
-#include "red_black_tree.h"
+#include "dense_map.h"
 
 //Simple yet pretty effective for our needs algorithm
 constexpr static u64 string_hash(const char* str, u32 size)
@@ -219,27 +219,18 @@ int main()
 	//Vector2D& vec = reg.get_component<Vector2D>(entity);
 	//int k = 0;
 
-	RedBlackTree<int> tree;
-	tree.emplace_node(0, int{});
-	tree.emplace_node(1, int{});
-	tree.emplace_node(2, int{});
-	tree.emplace_node(3, int{});
-	tree.emplace_node(4, int{});
-	tree.emplace_node(5, int{});
-	tree.emplace_node(6, int{});
-	tree.emplace_node(7, int{});
 
-	tree.delete_node(7);
-	tree.emplace_node(7, int{});
-
-	//tree.delete_node(5);
-	//tree.delete_node(6);
-	//tree.delete_node(7);
-	//tree.delete_node(1);
-	//tree.delete_node(4);
-	//tree.delete_node(2);
-	//tree.delete_node(3);
-	//tree.delete_node(0);
+	DenseMap<u64, int> mp;
+	mp.emplace(0, int{});
+	mp.emplace(1, int{});
+	mp.emplace(2, int{});
+	mp.emplace(3, int{});
+	mp.emplace(4, int{});
+	mp.emplace(5, int{});
+	mp.emplace(6, int{});
+	mp.emplace(7, int{});
+	
+	mp.erase(mp.begin());
 
 	return 0;
 }
