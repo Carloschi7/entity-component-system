@@ -34,9 +34,9 @@ struct GenericStorage
 template<typename Type>
 class TypeStorage : public GenericStorage
 {
-	using map_type         =    std::map<u64, Type>;
-	using iterator         =    typename map_type::iterator;
-	using const_iterator   =    typename map_type::const_iterator;
+	using MapType         =    DenseMap<u64, Type>;
+	using Iterator         =    typename MapType::Iterator;
+	using const_iterator   =    typename MapType::ConstIterator;
 public:
 	TypeStorage() : GenericStorage(type_hash<Type>()) {}
 	virtual ~TypeStorage() 
@@ -70,11 +70,11 @@ public:
 		return local_storage.find(entity);
 	}
 
-	iterator begin() {
+	Iterator begin() {
 		return local_storage.begin();
 	}
 
-	iterator end() {
+	Iterator end() {
 		return local_storage.end();
 	}
 
@@ -95,15 +95,15 @@ public:
 	}
 
 	Type& operator[](u64 key) {
-		return local_storage[key];
+		return local_storage.get_at(key);
 	}
 
 	const Type& operator[](u64 key) const {
-		return local_storage[key];
+		return local_storage.get_at(key);
 	}
 
 private:
-	map_type local_storage;
+	MapType local_storage;
 };
 
 template<typename Type>
@@ -133,7 +133,7 @@ public:
 			storage_cast<Type>(type_map).emplace(entity, std::forward<Args>(args)...);
 			type_register[hash_of_type] = type_map;
 		} else {
-			type_map = iter->second;
+			type_map = *iter;
 			storage_cast<Type>(type_map).emplace(entity, std::forward<Args>(args)...);
 		}
 
@@ -146,7 +146,7 @@ public:
 		auto type_iter = type_register.find(type_hash<Type>()); 
 		assert(type_iter != type_register.end());
 
-		TypeStorage<Type>& storage_of_type = storage_cast<Type>(type_iter->second);
+		TypeStorage<Type>& storage_of_type = storage_cast<Type>(*type_iter);
 		auto entity_iter = storage_of_type.find(entity);
 		assert(entity_iter != storage_of_type.end());
 
@@ -159,7 +159,7 @@ public:
 		auto type_iter = type_register.find(type_hash<Type>()); 
 		assert(type_iter != type_register.end());
 
-		TypeStorage<Type>& storage_of_type = storage_cast<Type>(type_iter->second);
+		TypeStorage<Type>& storage_of_type = storage_cast<Type>(*type_iter);
 		auto entity_iter = sub_map.find(entity);
 		assert(entity_iter != sub_map.end());
 
@@ -172,7 +172,7 @@ public:
 		auto type_iter = type_register.find(type_hash<Type>());
 		assert(type_iter != type_register.end());
 
-		TypeStorage<Type>& storage_of_type = storage_cast<Type>(type_iter->second);
+		TypeStorage<Type>& storage_of_type = storage_cast<Type>(*type_iter);
 		auto attribute_to_delete = storage_of_type.find(entity);
 		assert(attribute_to_delete != storage_of_type.end());
 
@@ -188,7 +188,7 @@ public:
 		auto type_iter = type_register.find(type_hash<Type>());
 		assert(type_iter != type_register.end());
 
-		TypeStorage<Type>& storage_of_type = storage_cast<Type>(type_iter->second);
+		TypeStorage<Type>& storage_of_type = storage_cast<Type>(*type_iter);
 		auto attribute_to_delete = storage_of_type.find(entity);
 		assert(attribute_to_delete != storage_of_type.end());
 
@@ -201,7 +201,7 @@ public:
 	}
 private:
 	mutable u64 entity_generational_index;
-	std::map<u64, std::shared_ptr<GenericStorage>> type_register;
+	DenseMap<u64, std::shared_ptr<GenericStorage>> type_register;
 };
 
 
@@ -219,18 +219,10 @@ int main()
 	//Vector2D& vec = reg.get_component<Vector2D>(entity);
 	//int k = 0;
 
-
-	DenseMap<u64, int> mp;
-	mp.emplace(0, int{});
-	mp.emplace(1, int{});
-	mp.emplace(2, int{});
-	mp.emplace(3, int{});
-	mp.emplace(4, int{});
-	mp.emplace(5, int{});
-	mp.emplace(6, int{});
-	mp.emplace(7, int{});
 	
-	mp.erase(mp.begin());
+	Registry reg;
+	reg.add_component<int>(0, 46);
+	int value = reg.get_component<int>(0);
 
 	return 0;
 }

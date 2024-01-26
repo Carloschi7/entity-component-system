@@ -44,7 +44,17 @@ public:
 		return node != other.node;
 	}
 
-	NodeType* _Get_Node() const { return node; }
+	operator bool()
+	{
+		return node != nullptr;
+	}
+
+	Type& operator*()
+	{
+		return *node->content;
+	}
+
+	inline NodeType* _Get_Node() const { return node; }
 
 private:
 	NodeType* node;
@@ -53,12 +63,15 @@ private:
 template <typename Key, typename Type>
 class DenseMap
 {
+public:
 	static_assert(std::is_integral_v<Key>, "for dense maps, the Key type needs to be an integral type, dense_map is not responsible for hash calculations");
 
 	using Tree =                RedBlackTree<Type>;
 	using Node =                TreeNode<Type, Key>;
 	using Iterator =            MapIterator<Type, Key, false>;
+	using ConstIterator =       MapIterator<Type, Key, false>;
 	using ReverseIterator =     MapIterator<Type, Key, true>;
+
 public:
 	DenseMap() = default;
 	
@@ -71,6 +84,13 @@ public:
 		return map_tree.emplace_node(index, std::forward<Args>(args)...);
 	}
 
+	Type& insert(Key index, Type& value)
+	{
+		static_assert(std::is_move_constructible_v<Type>, "Type needs to be move constructible");
+		delete_if_exists(index);
+		return map_tree.emplace_node(index, std::move(value));
+	}
+	
 	Type& get_at(Key index)
 	{
 		Node* node = map_tree.find_node(index);
@@ -107,6 +127,11 @@ public:
 		for (; first != last; ++first) {
 			erase(first);
 		}
+	}
+
+	Iterator find(Key key)
+	{
+		return Iterator{ map_tree.find_node(key) };
 	}
 
 	Iterator begin()
@@ -163,6 +188,7 @@ public:
 
 	const Type& operator[](const Key index) const
 	{
+		static_assert(std::is_default_constructible_v<Type>, "building objects without default constructors via the [] operator is not possible");
 		Node* node = map_tree.find_node(index);
 		assert(node != nullptr && node->content != nullptr);
 		return *node->content;
@@ -172,12 +198,26 @@ public:
 private:
 	void check_range_valid(const Iterator first, const Iterator second)
 	{
-		return first._Get_Node()->index < second._Get_Node()->index;
+		Node* first_node = first._Get_Node();
+		Node* second_node = second._Get_Node();
+		assert(first_node->index < second_node->index);
+
+		while (first_node && first_node != second_node)
+			first_node = first_node->find_next();
+
+		assert(first_node != nullptr);
 	}
 
 	void check_range_valid(const ReverseIterator first, const ReverseIterator second)
 	{
-		return first._Get_Node()->index > second._Get_Node()->index;
+		Node* first_node = first._Get_Node();
+		Node* second_node = second._Get_Node();
+		assert(first_node->index > second_node->index);
+
+		while (second_node && second_node != first_node)
+			second_node = second_node->find_next();
+
+		assert(second_node != nullptr);
 	}
 
 	void delete_if_exists(Key index)
